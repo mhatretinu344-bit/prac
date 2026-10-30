@@ -1,0 +1,994 @@
+*Practical No: 01*
+*Aim: Horizontal Fragmentation of Database.*
+
+-- Main table with Range Partition on SAL
+CREATE TABLE EMP_JULY_23 (
+    EMPNO NUMBER PRIMARY KEY,
+    ENAME VARCHAR2(20),
+    SAL NUMBER(7)
+)
+PARTITION BY RANGE (SAL) (
+    PARTITION SAL_P1 VALUES LESS THAN (4000),
+    PARTITION SAL_P2 VALUES LESS THAN (6000),
+    PARTITION SAL_P3 VALUES LESS THAN (MAXVALUE)
+);
+
+-- Insert data
+INSERT INTO EMP_JULY_23 VALUES (100, 'ABC', 1000);
+INSERT INTO EMP_JULY_23 VALUES (101, 'DEF', 2000);
+INSERT INTO EMP_JULY_23 VALUES (102, 'GHI', 3500);
+INSERT INTO EMP_JULY_23 VALUES (103, 'JKL', 5000);
+INSERT INTO EMP_JULY_23 VALUES (104, 'MNO', 9000);
+INSERT INTO EMP_JULY_23 VALUES (105, 'PQR', 7000);
+
+-- Display fragments (Partition-wise)
+SELECT * FROM EMP_JULY_23 PARTITION (SAL_P1);
+SELECT * FROM EMP_JULY_23 PARTITION (SAL_P2);
+SELECT * FROM EMP_JULY_23 PARTITION (SAL_P3);
+
+SELECT * FROM EMP_JULY_23;
+
+
+*Practical No. :- 2*
+*Aim: Study of vertical partitioning.
+
+-- 1. Original Main Table
+CREATE TABLE User_Og(
+    User_id NUMBER PRIMARY KEY,
+    Username VARCHAR2(20),
+    Password VARCHAR2(30),
+    Bio VARCHAR2(100)
+);
+
+-- 2. Insert Data in Main Table
+INSERT INTO User_Og VALUES (1, 'alex99', 'secret123', 'Coding enthusiast');
+INSERT INTO User_Og VALUES (2, 'sam12', 'mystery456', 'Photographer');
+INSERT INTO User_Og VALUES (3, 'john01', 'pass789', 'Travel Blogger');
+
+SELECT * FROM User_Og;
+-- 3. Vertical Fragment 1 : Only Login Info
+CREATE TABLE Fr_Login AS
+SELECT User_id, Username, Password FROM User_Og;
+
+SELECT * FROM Fr_Login;
+-- 4. Vertical Fragment 2 : Only Profile Info
+CREATE TABLE Fr_Profile AS
+SELECT User_id, Bio FROM User_Og;
+
+SELECT * FROM Fr_Profile;
+-- 5. Reconstruct original data using JOIN (Full View)
+CREATE VIEW full_view AS
+SELECT L.User_id, L.Username, L.Password, P.Bio
+FROM Fr_Login L
+JOIN Fr_Profile P ON L.User_id = P.User_id;
+
+SELECT * FROM full_view;
+*Output:*
+
+*Fr_Login Table:*
+USER_ID | USERNAME | PASSWORD
+1 | alex99 | secret123
+2 | sam12 | mystery456
+
+*Fr_Profile Table:*
+USER_ID | BIO
+1 | Coding enthusiast
+2 | Photographer
+
+*full_view (After JOIN):*
+USER_ID | USERNAME | PASSWORD | BIO
+1 | alex99 | secret123 | Coding enthusiast
+2 | sam12 | mystery456 | Photographer
+
+*Result: Vertical fragmentation of Database Completed successfully.*
+
+
+
+*Practical No : 03*
+*Aim : Creating Replica of Database*
+
+*Code:*
+-- 1. Main Table
+SQL> CREATE TABLE Student(
+Id INT PRIMARY KEY,
+Name VARCHAR(20),
+City VARCHAR(10));
+
+Table Created.
+-- 2. Replica Table
+SQL> CREATE TABLE Student_Replica As SELECT * FROM Student;
+
+Table Created.
+-- 3. Package to stop infinite loop (Tujhya vahi madhe spelling chukli hoti)
+SQL> CREATE PACKAGE Replication_Control IS
+is_replicating BOOLEAN := FALSE;
+END Replication_Control;
+/
+
+Package Created.
+-- 4. Trigger 1: Student -> Student_Replica
+SQL> CREATE TRIGGER Std_to_StdRep
+AFTER INSERT OR UPDATE OR DELETE ON Student
+FOR EACH ROW
+BEGIN
+ IF NOT Replication_Control.is_replicating THEN
+  Replication_Control.is_replicating := TRUE;
+
+  IF INSERTING THEN
+   INSERT INTO Student_Replica (Id, Name, City)
+   VALUES (:NEW.Id, :NEW.Name, :NEW.City);
+  ELSIF UPDATING THEN
+   UPDATE Student_Replica
+   SET Name = :NEW.Name, City = :NEW.City
+   WHERE Id = :OLD.Id;
+  ELSE
+   DELETE FROM Student_Replica
+   WHERE Id = :OLD.Id;
+  END IF;
+
+  Replication_Control.is_replicating := FALSE;
+ END IF;
+END;
+/
+
+Trigger Created.
+-- 5. Trigger 2: Student_Replica -> Student
+SQL> CREATE TRIGGER StdRep_to_Std
+AFTER INSERT OR UPDATE OR DELETE ON Student_Replica
+FOR EACH ROW
+BEGIN
+ IF NOT Replication_Control.is_replicating THEN
+  Replication_Control.is_replicating := TRUE;
+
+  IF INSERTING THEN
+   INSERT INTO Student (Id, Name, City)
+   VALUES (:NEW.Id, :NEW.Name, :NEW.City);
+  ELSIF UPDATING THEN
+   UPDATE Student
+   SET Name = :NEW.Name, City = :NEW.City
+   WHERE Id = :OLD.Id;
+  ELSIF DELETING THEN
+   DELETE FROM Student
+   WHERE Id = :OLD.Id;
+  END IF;
+
+  Replication_Control.is_replicating := FALSE;
+ END IF;
+END;
+/
+
+Trigger Created.
+-- 6. Testing
+SQL> INSERT INTO Student VALUES (1,'John','Mumbai');
+1 row created
+
+SQL> SELECT * FROM Student;
+ID  NAME   CITY
+1   John   Mumbai
+
+SQL> INSERT INTO Student_Replica VALUES (2,'Alex','Thane');
+1 row Created
+
+SQL> SELECT * FROM Student_Replica;
+ID  NAME   CITY
+1   John   Mumbai
+2   Alex   Thane
+
+SQL> UPDATE Student_Replica SET Name = 'Johny' WHERE Id = 1;
+1 row updated
+
+SQL> SELECT * FROM Student_Replica;
+ID  NAME   CITY
+1   Johny  Mumbai
+2   Alex   Thane
+
+SQL> INSERT INTO Student_Replica VALUES (3,'Maria','Pune');
+1 row Created
+
+SQL> SELECT * FROM Student;
+ID  NAME   CITY
+1   Johny  Mumbai
+2   Alex   Thane
+3   Maria  Pune
+
+SQL> DELETE FROM Student WHERE Id = 2;
+1 row deleted
+
+SQL> SELECT * FROM Student_Replica;
+ID  NAME   CITY
+1   Johny  Mumbai
+2   Maria  Pune
+*Result :- Creation of Replica of Database completed Successfully.*
+
+
+
+
+ *Practical No : 04*
+*Aim : Create Temporal Database*
+
+*1. Main Table*
+CREATE TABLE bank_account(
+account_no NUMBER PRIMARY KEY,
+customer_name VARCHAR(50),
+balance NUMBER
+);
+
+*2. History / Temporal Table*
+CREATE TABLE bank_account_history(
+log_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+account_no NUMBER,
+customer_name VARCHAR2(50),
+balance NUMBER,
+action_performed VARCHAR2(20),
+changed_at TIMESTAMP DEFAULT SYSTIMESTAMP
+);
+
+
+*3. Temporal Trigger*
+CREATE OR REPLACE TRIGGER trg_bank_temporal
+AFTER INSERT OR UPDATE OR DELETE ON bank_account
+FOR EACH ROW
+BEGIN
+ IF INSERTING THEN
+  INSERT INTO bank_account_history (account_no, customer_name, balance, action_performed)
+  VALUES (:NEW.account_no, :NEW.customer_name, :NEW.balance, 'INSERT');
+
+ ELSIF UPDATING THEN
+  INSERT INTO bank_account_history (account_no, customer_name, balance, action_performed)
+  VALUES (:OLD.account_no, :OLD.customer_name, :OLD.balance, 'BEFORE_UPDATE');
+
+ ELSIF DELETING THEN
+  INSERT INTO bank_account_history (account_no, customer_name, balance, action_performed)
+  VALUES (:OLD.account_no, :OLD.customer_name, :OLD.balance, 'DELETE');
+ END IF;
+END;
+/
+
+*4. INSERTING record*
+INSERT INTO bank_account VALUES (1001,'Rahul Sharma',25000);
+INSERT INTO bank_account VALUES (1002,'Priya Patel',45000);
+INSERT INTO bank_account VALUES (1003,'Priya Verma',35000);
+INSERT INTO bank_account VALUES (1004,'Amit Reddy',60000);
+INSERT INTO bank_account VALUES (1005,'Vikram Singh',15000);
+
+*5. Simulating timeline updates and deletion to test trigger*
+UPDATE bank_account SET balance = 30000 WHERE account_no = 1001;
+UPDATE bank_account SET balance = 40000 WHERE account_no = 1003;
+DELETE FROM bank_account WHERE account_no = 1005;
+
+*Q.1 Display active (non-historical) records currently in the live database*
+SELECT * FROM bank_account;
+
+ACCOUNT_NO  CUSTOMER_NAME   BALANCE
+1001        Rahul Sharma    30000
+1002        Priya Patel     45000
+1003        Priya Verma     40000
+1004        Amit Reddy      60000
+
+*Q.2 Display the complete history of all bank account changes*
+SELECT account_no, customer_name, balance, action_performed
+FROM bank_account_history ORDER BY log_id;
+ACCOUNT_NO | CUSTOMER_NAME | BALANCE | ACTION_PERFORMED
+1001 | Rahul Sharma | 25000 | INSERT
+
+*Q.3 Display the history of account 1001*
+SELECT account_no, customer_name, balance, action_performed
+FROM bank_account_history
+WHERE account_no = 1001 ORDER BY log_id DESC;
+ACCOUNT_NO | CUSTOMER_NAME | BALANCE | ACTION_PERFORMED
+1001 | Rahul Sharma | 25000 | BEFORE_UPDATE
+1001 | Rahul Sharma | 25000 | INSERT
+
+*Q.4 Display deleted bank Accounts*
+SELECT account_no, customer_name, balance, action_performed
+FROM bank_account_history WHERE action_performed = 'DELETE';
+ACCOUNT_NO | CUSTOMER_NAME | BALANCE | ACTION
+1005 | Vikram Singh | 15000 | DELETE
+
+*Q.5 Find accounts with a balance below 30000*
+SELECT DISTINCT account_no, customer_name, balance
+FROM bank_account_history WHERE balance < 30000;
+
+ACCOUNT_NO  CUSTOMER_NAME       BALANCE
+1001        Rahul Sharma        25000
+1005        Vikram Singh        15000
+
+*Q.6 Count the total changes for each account*
+SELECT account_no, COUNT(*) AS lifecycle_events
+FROM bank_account_history GROUP BY account_no;
+
+ACCOUNT_NO  LIFECYCLE_EVENTS
+1001        2
+1002        1
+1003        2
+1004        1
+1005        2
+
+*Q.7 Display the starting details of all 5 accounts*
+SELECT account_no, customer_name, balance, action_performed
+FROM bank_account_history
+WHERE action_performed = 'INSERT' ORDER BY account_no;
+ACCOUNT_NO | CUSTOMER_NAME | BALANCE | ACTION_PERFORMED
+1001 | Rahul Sharma | 25000 | INSERT
+1002 | Priya Patel | 45000 | INSERT
+1003 | Priya Verma | 35000 | INSERT
+1004 | Amit Reddy | 60000 | INSERT
+1005 | Vikram Singh | 15000 | INSERT
+
+*Result :-*
+The Temporal database was created successfully. The System stored the current bank account data and maintained the history of Insert, Update, Delete operation using a temporal history table and trigger.
+
+
+ *Practical No : 05*
+*Aim: Implement Active database using Triggers*
+
+
+---
+
+*Table 1 : Inventory*
+-- CORRECTED (Tujhya vahi madhe Product_name 2 veles hota)
+CREATE TABLE Inventory (
+    Product_id INT PRIMARY KEY,
+    Product_name VARCHAR2(50),
+    stock_quantity INT
+);
+
+Table Created.
+*Table 2 : Reorder_log*
+CREATE TABLE reorder_log (
+    log_id NUMBER PRIMARY KEY,
+    Product_id INT,
+    order_date TIMESTAMP DEFAULT SYSTIMESTAMP,
+    status VARCHAR2(20)
+);
+
+Table Created.
+*Sequence : reorder_log_Seq*
+CREATE SEQUENCE reorder_log_Seq
+START WITH 1
+INCREMENT BY 1;
+
+Sequence Created.
+*Trigger : check_low_stock*
+-- CORRECTED (Tujhya vahi madhe 2 END IF hote, 1ch pahije)
+CREATE OR REPLACE TRIGGER check_low_stock
+AFTER UPDATE ON Inventory
+FOR EACH ROW
+BEGIN
+    IF :NEW.stock_quantity < 5 THEN
+        INSERT INTO reorder_log (log_id, Product_id, status)
+        VALUES (reorder_log_Seq.NEXTVAL, :NEW.Product_id, 'PENDING_RESTOCK');
+    END IF;
+END;
+/
+
+Trigger Created.
+*Inserting Data*
+INSERT INTO Inventory VALUES (101, 'Laptop', 20);
+INSERT INTO Inventory VALUES (102, 'Mouse', 8);
+INSERT INTO Inventory VALUES (103, 'Keyboard', 8);
+INSERT INTO Inventory VALUES (104, 'Monitor', 4);
+INSERT INTO Inventory VALUES (105, 'Headphones', 15);
+INSERT INTO Inventory VALUES (106, 'USB Cable', 3);
+
+SELECT * FROM Inventory;
+*Inventory Table:*
+PRODUCT_ID | PRODUCT_NAME | STOCK_QUANTITY
+101 | Laptop | 20
+102 | Mouse | 8
+103 | Keyboard | 8
+104 | Monitor | 4
+105 | Headphones | 15
+106 | USB Cable | 3
+
+*Write SQL commands for the following:*
+
+*1. Update stock quantity of Product 101 to 10*
+UPDATE Inventory SET stock_quantity = 10 WHERE Product_id = 101;
+-- No log, because stock >= 5
+*
+
+*2. Update stock quantity of Product 101 to 2*
+UPDATE Inventory SET stock_quantity = 2 WHERE Product_id = 101;
+-- 1 row updated - Triggers, log will be created for 101
+
+*3. Update stock quantity of Product 104 to 5*
+UPDATE Inventory SET stock_quantity = 5 WHERE Product_id = 104;
+-- 1 row updated - No log (5 is not < 5)
+
+*4. Update stock quantity of Product 104 to 0UPDATE Inventory SET stock_quantity = 0 WHERE Product_id = 104;
+-- 1 row updated - Triggers, log will be created for 104
+
+*5. Check the contents of the reorder_log table*
+SELECT * FROM reorder_log;
+
+LOG_ID  PRODUCT_ID  REORDER_DATE      STATUS
+1       101         28-SEP-26         PENDING_RESTOCK
+2       104         28-SEP-26         PENDING_RESTOCK
+3       104         28-SEP-26         PENDING_RESTOCK
+
+*6. Display all reorder logs sorted by log ID*
+SELECT * FROM reorder_log ORDER BY log_id;
+
+*Result:*
+Thus, an active database system using database triggers and sequences was successfully implemented using Oracle SQL.
+
+
+ *Practical No : 06*
+*Aim: To create user defined object type and table and to perform basic operations using object-oriented queries.*
+
+*Problem Statement:*
+1. Create type PersonTy with fields surname, first name, middle name and mothers name
+2. Create a type addressTy (block_no, building_name, road_name, city)
+3. Create table Person (name type PersonTy, date_of_birth type date_T, address type addressTy, Salary, designation, organisation)
+
+---
+
+#### *-- Type 1 : PersonTy*
+CREATE TYPE PersonTy AS OBJECT (
+    SURNAME VARCHAR2(20),
+    FirstName VARCHAR2(20),
+    MiddleName VARCHAR2(20),
+    MothersName VARCHAR2(20)
+);
+/
+Type Created.
+#### *-- Type 2 : addressTy*
+CREATE TYPE addressTy AS OBJECT (
+    block_no NUMBER(10),
+    building_name VARCHAR2(30),
+    road_name VARCHAR2(30),
+    area_name VARCHAR2(30),
+    city_name VARCHAR2(30)
+);
+/
+Type Created.
+#### *-- Type 3 : date_T*
+CREATE TYPE date_T AS OBJECT (
+    date_no NUMBER(2),
+    month VARCHAR2(10),
+    year NUMBER(6)
+);
+/
+Type Created.
+#### *-- Table : Person*
+CREATE TABLE Person (
+    name PersonTy,
+    dob date_T,
+    address addressTy,
+    Salary NUMBER(20),
+    designation VARCHAR2(30),
+    organisation VARCHAR2(30)
+);
+
+Table Created.
+#### *-- Inserting Data*
+-- 1
+INSERT INTO Person VALUES (
+    PersonTy('Patel', 'Aarav', 'Dev', 'Kavita'),
+    date_T(12, 'August', 2004),
+    addressTy(27, 'Lake View', 'Salt Lake Road', 'Salt Lake', 'Kolkata'),
+    160000, 'FREELANCER', 'SkillCraft'
+);
+
+-- 2
+INSERT INTO Person VALUES (
+    PersonTy('Mehta', 'Ayush', 'Rohan', 'Anjali'),
+    date_T(18, 'October', 2005),
+    addressTy(37, 'Residency', 'Residency Road', 'Ashok Nagar', 'Bengaluru'),
+    42000, 'Manager', 'IBM'
+);
+
+-- 3
+INSERT INTO Person VALUES (
+    PersonTy('Raj', 'Smita', 'Sunita', 'Sunita'),
+    date_T(13, 'March', 2001),
+    addressTy(14, 'Rose Lane', 'Powai', 'Mumbai', 'Mumbai'),
+    16000, 'Designer', 'Deloitte'
+);
+
+-- 4
+INSERT INTO Person VALUES (
+    PersonTy('Kapoor', 'Aditya', 'Ranbir', 'Nutan'),
+    date_T(19, 'April', 2005),
+    addressTy(51, 'Mount', 'Mount Road', 'T Nagar', 'Chennai'),
+    23300, 'Technician', 'Reliance'
+);
+
+-- 5
+INSERT INTO Person VALUES (
+    PersonTy('Desai', 'Rishabh', 'Abhishek', 'Pooja'),
+    date_T(30, 'December', 2002),
+    addressTy(9, 'Koregaon', 'Koregaon Park', 'Koregaon', 'Pune'),
+    58000, 'Consultant', 'Tech Mahindra'
+);
+---
+
+### *Object Queries:*
+
+*1. Delete records from Person table where birth year is <= 2006*
+DELETE FROM Person P WHERE P.dob.year <= 2006;
+
+*2. Display City name along with total number of employees*
+SELECT P.address.city_name, COUNT(*) AS total_employees
+FROM Person P
+GROUP BY P.address.city_name;
+
+*3. Alter table Person and Drop the attribute 'road_name' from object type 'addressTy'*
+ALTER TYPE addressTy DROP ATTRIBUTE road_name CASCADE;
+
+*4. Retrieve surname, first name, designation and organisation whose birth year is before 2001*
+SELECT P.name.SURNAME, P.name.FirstName, P.designation, P.organisation
+FROM Person P
+WHERE P.dob.year < 2001;
+
+*5. Modify building name to 'New Mindspace Tower' for organization 'Technora'*
+UPDATE Person P
+SET P.address.building_name = 'New Mindspace Tower'
+WHERE P.organisation = 'Technora';
+
+*6. Display the salary of person whose first name is 'Mukta'*
+SELECT P.Salary FROM Person P WHERE P.name.FirstName = 'Mukta';
+
+*7. Retrieve all details of persons whose birth year is 2002 to 2005*
+SELECT * FROM Person P WHERE P.dob.year BETWEEN 2002 AND 2005;
+
+*8. Add 500 to the Salary where dob year = 2002*
+UPDATE Person P SET P.Salary = P.Salary + 500 WHERE P.dob.year = 2002;
+
+*9. Retrieve all details whose first name starts with 'Pate'*
+SELECT * FROM Person P WHERE P.name.FirstName LIKE 'Pate%';
+
+*10. Display average, minimum, maximum salary of persons born in year 2001 to 2006*
+SELECT AVG(P.Salary) AS avg_sal, MIN(P.Salary) AS min_sal, MAX(P.Salary) AS max_sal
+FROM Person P
+WHERE P.dob.year IN (2001,2002,2003,2004,2005,2006);
+
+Result:*
+The user-defined object types and tables were created successfully and basic operations were performed using object oriented queries.
+
+
+
+*Practical No : 07*
+*Aim: To create user-defined object types and tables to perform basic operations using ORDBMS*
+
+*Problem Statement:*
+To design and Implement a Student Database Management using Object-Relational feature by creating object types (Name, Address, Subject and Marks), Implementing Primary key and Foreign key Constraints and performing SQL operations such as INSERT, SELECT, JOIN and Aggregate function.
+
+---
+
+#### *1. Create Type for Student Name*
+CREATE TYPE Student_name_t AS OBJECT (
+    first_name VARCHAR2(30),
+    middle_name VARCHAR2(30),
+    last_name VARCHAR2(30)
+);
+/
+Type Created.
+#### *2. Create Type for Address*
+CREATE TYPE address_t AS OBJECT (
+    City VARCHAR2(20),
+    State VARCHAR2(20),
+    Pincode NUMBER(6)
+);
+/
+Type Created.
+#### *3. Create Type for Marks*
+CREATE TYPE marks_t AS OBJECT (
+    Python_m NUMBER(3),
+    Java_m NUMBER(3),
+    Web_Program NUMBER(3)
+);
+/
+Type Created.
+#### *4. Student Details Table (Primary Key)*
+CREATE TABLE Student_details (
+    PRN NUMBER(6) PRIMARY KEY,
+    name Student_name_t,
+    address address_t,
+    gender VARCHAR2(10),
+    age NUMBER(3)
+);
+
+Table Created.
+#### *5. Student Info Table (Foreign Key)*
+CREATE TABLE Student_info (
+    Info_id NUMBER PRIMARY KEY,
+    PRN NUMBER,
+    marks marks_t,
+    semester NUMBER(2),
+    grade VARCHAR2(2),
+    FOREIGN KEY (PRN) REFERENCES Student_details(PRN)
+);
+
+Table Created.
+#### *6. INSERT INTO Student_details (Primary Key Table)*
+INSERT INTO Student_details VALUES (101, Student_name_t('Rahul', 'Amit', 'Sharma'), address_t('Thane', 'Maharashtra', 400601), 'Male', 20);
+INSERT INTO Student_details VALUES (102, Student_name_t('Sneha', 'Raj', 'Patil'), address_t('Mumbai', 'Maharashtra', 400001), 'Female', 19);
+INSERT INTO Student_details VALUES (103, Student_name_t('Amit', 'Suresh', 'Rao'), address_t('Pune', 'Maharashtra', 411001), 'Male', 21);
+#### *7. INSERT INTO Student_info (Foreign Key Table)*
+INSERT INTO Student_info VALUES (1, 101, marks_t(85, 80, 90), 3, 'A');
+INSERT INTO Student_info VALUES (2, 103, marks_t(78, 88, 91), 3, 'A');
+INSERT INTO Student_info VALUES (3, 102, marks_t(70, 75, 82), 3, 'B');
+---
+
+#### *Table Created: Student_details*
+
+`SELECT * FROM Student_details;`
+PRN | name (first, middle, last) | address (City, State, Pincode) | Gender | Age
+101 | Student_name_t('Rahul', 'Amit', 'Sharma') | address_t('Thane', 'Maharashtra', 400601) | Male | 20
+102 | Student_name_t('Sneha', 'Raj', 'Patil') | address_t('Mumbai', 'Maharashtra') | Female | 19
+103 | Student_name_t('Amit', 'Suresh', 'Rao') | address_t('Pune', 'Maharashtra', 411001) | Male | 21
+#### *Table Created: Student_info*
+
+`SELECT * FROM Student_info;`
+Info_id | PRN | marks(Python, Java, Web) | Semester | Grade
+1 | 101 | marks_t(85,80,90) | 3 | A
+2 | 103 | marks_t(78,88,91) | 3 | A
+3 | 102 | marks_t(70,75,82) | 3 | B
+---
+
+### *QUERIES:*
+
+*1. Display the first_name, middle & last_name of all students*
+SELECT s.name.first_name,
+       s.name.middle_name,
+       s.name.last_name
+FROM Student_details s;
+
+*2. Display the City, State of all students*
+SELECT s.address.City,
+       s.address.State
+FROM Student_details s;
+
+*3. Display Python & Web Programming marks of all students*
+SELECT i.marks.Python_m,
+       i.marks.Web_Program
+FROM Student_info i;
+
+*4. Display student name along with semester & grade using INNER JOIN*
+SELECT s.name.first_name,
+       i.semester,
+       i.grade
+FROM Student_details s
+JOIN Student_info i ON s.PRN = i.PRN;
+
+*5. Display student name along with Python, Java & Web Programming marks using JOIN*
+SELECT s.name.first_name,
+       i.marks.Python_m,
+       i.marks.Java_m,
+       i.marks.Web_Program
+FROM Student_details s
+JOIN Student_info i ON s.PRN = i.PRN;
+
+*6. Display the total marks of each student*
+SELECT s.name.first_name,
+       (i.marks.Python_m + i.marks.Java_m + i.marks.Web_Program) AS total_marks
+FROM Student_details s
+JOIN Student_info i ON s.PRN = i.PRN;
+
+*7. Display the average Python marks of all students*
+SELECT AVG(i.marks.Python_m) FROM Student_info i;
+
+*8. Count the total number of students*
+SELECT COUNT(*) FROM Student_details;
+
+*9. Display student name, age, gender from table whose age is greater than 20*
+SELECT s.name.first_name, s.age, s.gender
+FROM Student_details s
+WHERE s.age > 20;
+
+*10. Display student name in display order (Descending)*
+SELECT s.name.first_name
+FROM Student_details s
+ORDER BY s.name.first_name DESC;
+
+*11. Display students whose name starts with 'A'*
+SELECT s.name.first_name
+FROM Student_details s
+WHERE s.name.first_name LIKE 'A%';
+
+*Result:*
+Object types & object tables was successfully completed by using user-defined objects. Using check, ORDBMS Primary key and Foreign key Constraints implemented & various SQL operations were performed successfully.
+
+
+
+
+Practical No: 8
+Aim: Implement and retrieve from a spatial database
+
+A] spatial Database
+Create a spatial database that stores the number, name and location which consists of four different areas, as say, abc, pqr, mno, and xyz.
+
+Create Table cola_markets;
+
+CREATE TABLE cola_markets (
+mkt_id NUMBER PRIMARY KEY,
+name VARCHAR (32),
+shape MDSYS.SDO_GEOMETRY);
+Use code with caution.
+Insert Values Into Table cola_markets;
+
+INSERT INTO cola_markets VALUES (
+1, 'abc',
+MDSYS.SDO_GEOMETRY (
+2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 3),
+MDSYS.SDO_ORDINATE_ARRAY (1, 1, 5, 7)));
+
+INSERT INTO cola_markets VALUES (
+2, 'pqr', MDSYS.SDO_GEOMETRY (
+2003, NULL, NULL, 
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 1003, 1),
+MDSYS.SDO_ORDINATE_ARRAY (5, 1, 8, 1, 8, 6, 5, 7, 5, 1)
+));
+INSERT INTO cola_markets VALUES (
+3, 'mno', MDSYS.SDO_GEOMETRY (
+2003, NULL, NULL, MDSYS.SDO_ELEM_INFO_ARRAY (1,1003,1),
+MDSYS.SDO_ORDINATE_ARRAY (3,3, 6,3, 6,5, 4,5, 3,3)));
+
+INSERT INTO cola_markets VALUES (
+4, 'xyz', MDSYS.SDO_GEOMETRY (
+2003, NULL, NULL, MDSYS.SDO_ELEM_INFO_ARRAY (1,2003,4),
+MDSYS.SDO_ORDINATE_ARRAY (8,7, 10,9, 8,11)));
+
+Inserting into user_SDO_GEOM_METADATA :
+
+Insert INTO user_sdo_geom_metadata VALUES (
+'cola_markets', 'shape', MDSYS.SDO_DIM_ARRAY(
+MDSYS.SDO_DIM_ELEMENT ('X', 0, 20, 0.005), MDSYS.SDO_DIM
+_ELEMENT ('Y', 0, 20, 0.005)), NULL);
+
+Create the Spatial Index
+
+CREATE INDEX cola_spatial_idx ON cola_markets (shape)
+INDEXTYPE IS MDSYS.SPATIAL_INDEX;
+-- INDEX CREATED
+
+# Queries:
+
+1) Find the topological intersection of two geometries.
+-> SELECT SDO_GEOM.SDO_INTERSECTION(c_a.shape, c_c.shape, 0.005) FROM cola_markets c_a, cola_markets c_c WHERE c_a.name = 'abc' AND c_c.name = 'mno';
+
+2) Find whether two geometric figures are equivalent to each other.
+\(\rightarrow \) SELECT SDO_GEOM.RELATE(c_b.shape, 'equal', c_d.shape, 0.005)
+FROM cola_markets c_b, cola_markets c_d WHERE
+c_b.name = 'abc' AND c_d.name = 'mno';
+
+3) Find the areas of all direction locations:
+\(\rightarrow \) SDO_GEOM.RELATE (C.B.SHAPE, 'EQUAL', C.D.SHAPE, 0.005)
+
+4) Find the area of only one location
+\(\rightarrow \) SELECT c.name, SDO_GEOM.SDO_AREA (c.shape, 0.005) FROM
+cola_markets c WHERE c.name = 'xyz';
+
+5) Find the distance between two geometries:
+\(\rightarrow \) SELECT SDO_GEOM.SDO_DISTANCE (c_b.shape, c_d.shape, 0.005)
+FROM cola_markets c_b, cola_markets c_d WHERE
+c_b.name = 'abc' AND c_d.name = 'xyz';
+
+
+B] Spatial Database
+Creating a spatial database that stores the number, name and location, which consists of different areas within the university campus including the main gate the Playground the arts and science buildings the lab and print facility building.
+Create table university_camp
+sql
+CREATE TABLE university_camp(
+b_id number PRIMARY KEY, name varchar(32),
+shape MDSYS.SDO_GEOMETRY);
+Use code with caution.
+Inserting values into university camp
+sql
+Insert INTO university_camp VALUES(
+1, 'a', MDSYS.SDO_GEOMETRY(2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY(1, 2003, 3),
+MDSYS.SDO_ORDINATE_ARRAY(1, 5, 2, 8)));
+Use code with caution.
+sql
+Insert INTO university_camp VALUES(
+2, 'b', MDSYS.SDO_GEOMETRY(2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY(2, 2003, 4)
+MDSYS.SDO_ORDINATE_ARRAY(3, 7, 5, 5, 9)));
+Use code with caution.v
+sql
+Insert INTO university_camp VALUES(
+3, 'c', MDSYS.SDO_GEOMETRY(2003, NULL, NULL,MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 1),
+MDSYS.SDO_ORDINATE_ARRAY (8, 10, 11, 10, 11, 13, 8, 13, 8, 11, 8, 10));
+
+Insert into university_camp VALUES (
+4, 'd', MDSYS.SDO_GEOMETRY (2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 3),
+MDSYS.SDO_ORDINATE_ARRAY (8, 6, 10, 8)));
+
+Insert INTO university_camp VALUES (
+5, 'e', MDSYS.SDO_GEOMETRY (2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 4),
+MDSYS.SDO_ORDINATE_ARRAY (8, 9, 10, 7)));
+
+Insert INTO university_camp VALUES (
+6, 'f', MDSYS.SDO_GEOMETRY (2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 3),
+MDSYS.SDO_ORDINATE_ARRAY (9, 1, 11, 3)));
+
+Insert INTO university_camp VALUES (
+7, 'g', MDSYS.SDO_GEOMETRY (2003, NULL, NULL,
+MDSYS.SDO_ELEM_INFO_ARRAY (1, 2003, 1),
+MDSYS.SDO_ORDINATE_ARRAY (4, 2, 7, 2, 8, 3, 7, 4, 9, 9, 2, 11));
+
+
+Inserting INTO USER_SDO_GEOM_METADATA:
+
+Insert Into USER_SDO_GEOM_METADATA VALUES (
+'university_camp', 'shape', MDSYS.SDO_DIM_ELEMENT ('X', 0, 20, 0.005),
+MDSYS.SDO_DIM_ELEMENT ('Y', 0, 20, 0.003), NULL );
+Create the Spatial Index
+sql
+CREATE INDEX campus_spatial_idx
+ON university_camp (Shape)
+INDEXTYPE IS MDSYS.SPATIAL_INDEX;
+-- INDEX CREATED
+Use code with caution.
+
+# Queries
+
+1) Display area for each object
+sql
+-> SELECT name, SDO_GEOM.SDO_AREA (shape, 0.005)
+FROM university_camp;
+Use code with caution.
+
+2) Find out the distance of the main gate from all other objects.
+sql
+-> SELECT SDO_GEOM.SDO_DISTANCE (c_b.shape, c_d.shape, 0.003)
+FROM university_camp c_b, university_camp c_d WHERE
+c_b.name = 'a' AND c_d.name = 'b';
+Use code with caution.
+sql
+
+2) SELECT SDO_GEOM.SDO_DISTANCE (c_b.shape, c_d.shape, 0.0003)
+FROM university_camp c_b, university_camp c_d WHERE
+c_b.name = 'a' AND c_d.name = 'c';
+Use code with caution.
+sql
+
+3) SELECT SDO_GEOM.SDO_DISTANCE (c_b.shape, c_d.shape, 0.003)
+FROM university_camp c_b, university_camp c_d
+Use code with caution.
+sql
+
+4) SELECT SDO_GEOM.SDO_DISTANCE (c_b.shape, c_d.shape, 0.003)
+FROM university_camp c_b, university_camp c_d
+WHERE c_b.name = 'a' AND c_d.name = 'e';
+
+5) SELECT SDO_GEOM.SDO_DISTANCE(c_b.shape, c_d.shape, 0.005)
+   FROM university_camp c_b, university_camp c_d
+   WHERE c_b.name = 'a' AND c_d.name = 'f';
+
+6) SELECT SDO_GEOM.SDO_DISTANCE(c_b.shape, c_d.shape, 0.005)
+   FROM university_camp c_b, university_camp c_d
+   WHERE c_b.name = 'a' AND c_d.name = 'g';
+
+3) Find the intersection area of lab and Print Facility.
+   → SELECT SDO_GEOM.SDO_INTERSECTION(c_a.shape, c_c.shape, 0.005)
+     FROM university_camp c_a, university_camp c_c
+     WHERE c_a.name = 'd' AND c_c.name = 'e';
+
+4) Distance between arts & science building
+   → SELECT SDO_GEOM.SDO_DISTANCE(c_b.shape, c_d.shape, 0.005)
+     FROM university_camp c_b, university_camp c_d
+     WHERE c_b.name = 'c' AND c_d.name = 'g';
+
+5) Find the spatial relationship between Canteen and Print Facility.
+   → SELECT SDO_GEOM.RELATE(c_b.shape, 'anyinteract', c_d.shape, 0.005)
+     FROM university_camp c_b, university_camp c_d
+     WHERE c_b.name = 'e' AND c_d.name = 'f';
+
+6) Find the distance between college building and canteen
+   → SELECT SDO_GEOM.SDO_DISTANCE(c_b.shape, c_d.shape, 0.005)
+     FROM university_camp c_b, university_camp c_d
+     WHERE c_b.name = 'c' AND c_d.name = 'f';
+
+   SELECT SDO_GEOM.SDO_DISTANCE(c_b.shape, c_d.shape, 0.005)
+   FROM university_camp c_b, university_camp c_d
+   WHERE c_b.name = 'g' AND c_d.name = 'f';
+
+Result:
+Spatial database operations were successfully executed using oracle spatial (MDSYS.SDO_GEOMETRY) by registering metadata, creating indexes and performing area, distance, Intersection and spatial relationship queries.
+
+
+Practical NO : 9
+Aim : Implement Active database using Triggers.
+Table 1 : Inventory
+sql
+Create table Inventory (
+    Product_Id int Primary key,
+    Product_name varchar (50),
+    stock_quantity int );
+Use code with caution.
+table created
+Table 2 : reorder_log
+sql
+Create table reorder_log (
+    log_id number Primary key,
+    Product_id int,
+    Order_data TIMESTAMP,
+    Status varchar (20));
+Use code with caution.
+table created
+Sequence reorder_log_Seq
+sql
+Create sequence reorder_log_seq Start with 1 increment by 1 .
+Use code with caution.
+Sequence created.
+Trigger: Check_low_stock
+
+CREATE OR REPLACE TRIGGER Check_low_stock AFTER
+UPDATE ON Inventory
+FOR EACH ROW
+BEGIN
+    IF :NEW.Stock_quality < 5 THEN
+        INSERT INTO reorder_log (log_id, Product_id, status)
+        VALUES (reorder_log_seq.NEXTVAL, :NEW.Product_id, 'PENDING_RESTOCK');
+    END IF;
+END;
+/
+
+Trigger Created
+
+Inserting data
+
+INSERT INTO Inventory VALUES (101, 'Laptop', 20);
+INSERT INTO Inventory VALUES (102, 'Mouse', 8);
+INSERT INTO Inventory VALUES (103, 'Keyboard', 8);
+INSERT INTO Inventory VALUES (104, 'Monitor', 4);
+INSERT INTO Inventory VALUES (105, 'Headphones', 12);
+INSERT INTO Inventory VALUES (106, 'USB Cable', 3);
+
+SELECT * FROM Inventory;
+
+Product_id      Product_name
+101             Laptop
+102             Mouse
+103        Keyboard
+104          Monitor
+105  Headphones
+106      USBcables
+
+Write SQL commands for the following
+
+1. Update stock quantity of Product 101 to 10.
+-> UPDATE Inventory SET Stock_quantity = 10 where Product_id = 101;
+1 row updated
+
+2. Update stock quantity of Product 104 to 5.
+-> UPDATE Inventory SET Stock_quantity = 5 where Product_id = 104;
+1 row updated
+
+3. update stock quantity of Product 101 to 2.
+-> Update Inventory Set Stock_quantity = 2 Where Product_id = 101 ;
+1 row updated 
+
+4. Update stock quantity of product 104 to 0.
+-> Update Inventory SET stock_quantity = 0 where Product_id = 104;
+1 row updated
+
+5. Check the contents of the reorder log table.
+-> select * from reorder_log;
+
+LOG_ID	Product_Id	Reorder_Date	Status
+1	101	23-SEP-26	PENDING
+2	104	23-SEP-26	PENDING
+3	104	23-SEP-26	PENDING
+
+6. Display all reorder logs sorted by log_ID.
+-> select * from reorder_log Order by log_id;
+
+LOG_ID	Product_Id	Reorder_Date	Status
+1	101	23-SEP-26	PENDING
+2	104	23-SEP-26	PENDING
+3	104	23-SEP-26	PENDING
+
+Result:
+Thus, an active database system using database triggers and sequences was successfully implemented using oracle SQL.
+
+
+
